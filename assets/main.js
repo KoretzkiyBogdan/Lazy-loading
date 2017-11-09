@@ -34,14 +34,16 @@
     xhr.send();
   };
 
-  Model.prototype.getPhotos = function(params, callback) {
+  Model.prototype.getPhotoLinks = function(params, callback) {
+
+    callback = typeof callback === 'function' ? callback : function() {};
 
     var query = {
       method: 'flickr.photos.getRecent',
       api_key: this.apiKey,
       page: params ? params.page : 1,
-      per_page: params ? params.perPage: 50,
-      extras: 'url_m',
+      per_page: params ? params.perPage: 40,
+      extras: 'url_o,url_m',
       format: 'json',
       nojsoncallback: 1
     };
@@ -54,11 +56,18 @@
 
     return this._GET(this.apiUrl + '?' + queryString, function(err, response) {
 
-      if (response && response.stat === 'ok') {
-        return callback(null, response.photos);
+      if (!response ||  response.stat !== 'ok') {
+        return callback(err);
       }
 
-      callback(err);
+      var photo = response && response.photos ? response.photos.photo : [];
+
+      var links = photo.map(function(photo) {
+
+        return photo.url_m || photo.url_o;
+      });
+
+      callback(null, links);
     });
   };
 
@@ -67,9 +76,13 @@
     params = params || {};
 
     this.rootElement = params.rootElement;
-    this.imgHeight = params.imgHeight || 120;
+    this.imgHeight = params.imgHeight || 180;
     this.container = this.rootElement.querySelector('.container');
-    this.onKeyDown = null;
+    // Events
+    this.onWheel = function() {};
+    this.onKeyDown = function() {};
+
+    this.rootElement.addEventListener('wheel', this.onWheel);
   };
 
   View.prototype.selectElement = function(index) {
@@ -87,46 +100,68 @@
     }
   };
 
-  View.prototype.scrollToRow = function(row) {
+  View.prototype.scrollToRow = function(row, animate, callback) {
 
-    var heightWithMargin = this.imgHeight + 14;
+    var multiplier = row - 1.5;
+    var heightWithMargin = this.imgHeight + 44;
     var startPosition = parseInt(this.container.style.top.replace('px', '') || 0);
+    var finalPosition = row < 2 ? 0 : -(heightWithMargin * multiplier);
+    var currentPosition = startPosition;
 
-    this.container.style.top = -(heightWithMargin * row ) + 'px';
+    if (!animate) {
+      this.container.style.top = finalPosition + 'px';
+      return;
+    }
+
+    var perStep = (finalPosition - startPosition) / 6;
+    var counter = 0;
+    var self = this;
+
+    var timer = setInterval(function() {
+
+      if (counter >= 6) {
+        typeof callback == 'function' ? callback() : null;
+        return clearInterval(timer);
+      }
+
+       currentPosition += perStep;
+       self.container.style.top = currentPosition + 'px';
+       counter++;
+    }, 30);
   }
 
-  View.prototype.render = function(photos, done) {
+  View.prototype.render = function(links, insertAfter) {
 
     var self = this;
 
     var fragment = document.createDocumentFragment();
 
-    photos.forEach(function(photo, index) {
+    links.forEach(function(link) {
 
       var container = document.createElement('div');
       var img = document.createElement('img');
       container.className = 'photo-container';
       container.style.height = self.imgHeight + 'px';
-      container.dataset.index = index;
       img.className = 'photo'
-      img.src = photo.url_m;
+      img.src = link;
       container.appendChild(img)
       fragment.appendChild(container);
     });
 
-    this.container.appendChild(fragment);
-    done();
+    insertAfter ? this.container.appendChild(fragment): this.container.insertBefore(fragment, this.container.firstChild);
   };
 
-  View.prototype.removeElements = function(count) {
+  View.prototype.removeElements = function(count, fromStart) {
 
     var elements = document.querySelectorAll('.photo-container');
+    var maxIndex = elements.length - 1;
+    var i = fromStart ? 0 : maxIndex;
+    var step = fromStart ? 1 : -1;
 
-    for (var i = 0; i < elements.length; i++) {
-      if (i >= count) {
-        return;
-      }
+    while (fromStart ? i < count : i > (maxIndex - count)) {
       elements[i].remove();
+      console.log(1);
+      i += step;
     }
   };
 
@@ -134,9 +169,13 @@
 
     this.view = view;
     this.model = model;
-    this.elements = [];
-    this.selectedElementIndex = null;
+    this.photoPerPage = 50;
+    this.availableOffset = 15;
+    this.page = 1;
+    this.photoLinks = [];
+    this.selectedElementIndex = 0;
     this._onWheel = false;
+    this._onRequest = false;
     this.initialize();
   };
 
@@ -144,13 +183,20 @@
 
     var self = this;
 
-    self.getPhotos(1, 50, function() {
+    self.model.getPhotoLinks({ page: self.page, perPage: self.photoPerPage}, function(err, links) {
 
-      self.view.selectElement(0);
-      this.selectedElementIndex = 0;
+      if (err) {
+        return err;
+      }
+
+      self.photoLinks = self.photoLinks.concat(links);
+      self.view.render(self.photoLinks.slice(-self.photoPerPage), true);
+      self.view.selectElement(self.selectedElementIndex);
+      self.view.scrollToRow(1);
     });
 
     self.view.rootElement.addEventListener('wheel', self.onWheel.bind(self));
+    self.view.onWheel = self.onWheel.bind(self);
 
     document.addEventListener('keyup', self.onKeyUp.bind(self));
 
@@ -178,6 +224,70 @@
     }
   };
 
+  Controller.prototype.getMorePhotos = function() {
+
+    if (this._onRequest) {
+      return;
+    }
+
+    var self = this;
+    var newPage = self.page + 1;
+
+    var startIndex = self.page * self.photoPerPage;
+    var endIndex = startIndex + (self.photoPerPage - self.availableOffset);
+
+    // Check chache
+    if (endIndex < self.photoLinks.length) {
+
+      console.log('Fetch photo from cache');
+
+      self.selectedElementIndex = (self.selectedElementIndex % 5) + 5;
+      self.view.removeElements(self.photoPerPage - self.availableOffset, true);
+      self.view.render(self.photoLinks.slice(startIndex, endIndex), true);
+      self.view.selectElement(self.selectedElementIndex);
+      self.view.scrollToRow(2);
+      self.page = newPage;
+      return;
+    }
+
+    self._onRequest = true;
+
+    self.model.getPhotoLinks({ page: newPage, perPage: self.photoPerPage }, function(err, links) {
+
+      self._onRequest = false;
+
+      if (err) {
+        return err;
+      }
+
+      self.page = newPage;
+      self.photoLinks = self.photoLinks.concat(links);
+      self.selectedElementIndex = (self.selectedElementIndex % 5) + 5;
+      self.view.removeElements(self.photoPerPage - self.availableOffset, true);
+      self.view.render(self.photoLinks.slice(startIndex, endIndex), true);
+      self.view.selectElement(self.selectedElementIndex);
+      self.view.scrollToRow(2);
+    });
+  };
+
+  Controller.prototype.backToOldPhotos = function() {
+
+    var self = this;
+    var newPage = self.page - 1;
+
+    var startIndex = (newPage - 1) * self.photoPerPage;
+    var endIndex = startIndex + (self.photoPerPage - self.availableOffset);
+
+    self.selectedElementIndex = (self.selectedElementIndex % 5) + (self.photoPerPage - self.availableOffset);
+
+    self.view.removeElements(self.photoPerPage - self.availableOffset, false);
+    self.view.render(self.photoLinks.slice(startIndex, endIndex), false);
+    self.view.selectElement(self.selectedElementIndex);
+    self.view.scrollToRow(8);
+    self.page = newPage;
+
+  };
+
   Controller.prototype.onWheel = function(event) {
 
     if (this._onWheel) {
@@ -196,44 +306,53 @@
 
   Controller.prototype.moveSelectElement = function(step) {
 
-    var newPosition = this.selectedElementIndex + step;
-    var allElementsLength = this.elements.length;
-    var row = Math.floor(newPosition / 5);
-
-    if ((allElementsLength - newPosition) <= 10) {
-      this.view.removeElements(40);
-      newPosition = newPosition - 40;
-      row = 0;
+    if (this._onRequest) {
+      return;
     }
-
-    if (newPosition >= 0 && newPosition <= (allElementsLength - 1)) {
-      this.view.selectElement(newPosition);
-      this.selectedElementIndex = newPosition;
-      this.view.scrollToRow(row);
-    }
-  };
-
-  Controller.prototype.getPhotos = function(page, count, done) {
 
     var self = this;
+    var newPosition = this.selectedElementIndex + step;
+    var allPhotoLinksLength = this.photoLinks.length;
+    var maxRows = Math.floor(this.photoPerPage / 5);
+    //
+    var row = Math.floor(newPosition / 5) + 1;
+    var moveUp = row - (Math.floor(this.selectedElementIndex / 5) + 1) === -1;
 
-    self.model.getPhotos({ page: page, perPage: count }, function(err, response) {
+    if (newPosition < 0) {
+      return;
+    }
 
-      if (err) {
-        return err;
-      }
+    if (newPosition <= (allPhotoLinksLength - 1)) {
+      this.selectedElementIndex = newPosition;
+      this.view.selectElement(this.selectedElementIndex);
+      this.view.scrollToRow(row, true, function() {
 
-      self.elements = response.photo;
-      self.view.render(self.elements, done);
-    });
+        if (row + 1 === maxRows) {
+          self.getMorePhotos();
+        } else if (moveUp && row === 1 && self.page !== 1) {
+          self.backToOldPhotos();
+        }
+      });
+    }
   };
 
-  var model = new Model('https://api.flickr.com/services/rest/', 'bde8d7724318c876c5f974772dc62e31');
-  var view = new View({
-    rootElement: document.getElementById('app'),
-    imgHeight: 120
-  });
-  var controller = new Controller(view, model);
+  window.App = function(params) {
 
-  window.app = controller;
+    params = params || {};
+
+    var model = new Model(params.apiUrl, params.secret);
+    var view = new View({
+      rootElement: params.rootElement,
+      imgHeight: params.imgHeight
+    });
+    return new Controller(view, model);
+  };
+
 })(window);
+
+var app = new App({
+  apiUrl: 'https://api.flickr.com/services/rest/',
+  secret: 'bde8d7724318c876c5f974772dc62e31',
+  rootElement: document.getElementById('app'),
+  imgHeight: 366
+});
