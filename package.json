@@ -5,11 +5,22 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "develop": "node server.js | gulp watcher",
+    "build": "gulp compress",
+    "lint": "gulp lint",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "Bohdan Koretskiy",
   "license": "MIT",
   "dependencies": {
     "static-server": "^2.0.6"
+  },
+  "devDependencies": {
+    "gulp": "^3.9.1",
+    "gulp-clean-css": "^3.9.0",
+    "gulp-eslint": "^4.0.0",
+    "gulp-sourcemaps": "^2.6.1",
+    "gulp-uglify": "^3.0.0",
+    "pump": "^1.0.2"
   }
 }

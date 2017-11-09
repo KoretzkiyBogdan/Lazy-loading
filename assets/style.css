@@ -17,11 +17,6 @@ html, body {
   justify-content: space-between;
 }
 
-.row-padding {
-  flex: 0 0 100%;
-  margin: 20px auto;
-}
-
 .photo-container {
   display: block;
   overflow: hidden;
