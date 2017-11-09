@@ -390,7 +390,7 @@
 
     // If it permorm http (getting new photos) - do nothing
     if (this._onRequest) {
-      return;
+      return callback();
     }
 
     var self = this;
@@ -403,7 +403,7 @@
     var moveUp = row - (Math.floor(this.selectedElementIndex / this.photosInRow) + 1) === -1;
 
     if (newPosition < 0) {
-      return;
+      return callback();
     }
 
     if (newPosition <= (allPhotoLinksLength - 1)) {
